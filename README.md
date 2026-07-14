@@ -4,7 +4,9 @@ A chess engine and AI opponent, written from scratch in Java. No chess
 libraries, no external engines — move generation, check/checkmate detection,
 the evaluation function, and the minimax search are all hand-built.
 
-![Board](screenshots/board.png)
+![Board](screenshots/chess.png)
+
+![Advisor's Counsel panel](screenshots/chess_1.png)
 
 ## What it does
 
