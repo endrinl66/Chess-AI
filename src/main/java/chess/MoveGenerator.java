@@ -26,6 +26,10 @@ public class MoveGenerator {
             {1, 1}, {1, -1}, {-1, 1}, {-1, -1}
     };
 
+    private static final PieceType[] PROMOTION_CHOICES = {
+            PieceType.QUEEN, PieceType.ROOK, PieceType.BISHOP, PieceType.KNIGHT
+    };
+
     public List<Move> generateKnightMoves(Board board, Position from) {
         List<Move> moves = new ArrayList<>();
         Piece knight = board.getPieceAt(from);
@@ -89,11 +93,14 @@ public class MoveGenerator {
 
         int direction = (color == Color.WHITE) ? 1 : -1;
         int startRow = (color == Color.WHITE) ? 1 : 6;
+        int promotionRow = (color == Color.WHITE) ? 7 : 0;
 
+        // 1. Move forward one square (only if empty)
         Position oneForward = new Position(from.row + direction, from.col);
         if (oneForward.isOnBoard() && board.getPieceAt(oneForward) == null) {
-            moves.add(new Move(from, oneForward, pawn, null, false, false, null));
+            addPawnMove(moves, from, oneForward, pawn, null, promotionRow);
 
+            // 2. Move forward two squares from starting row (only if both squares are empty)
             if (from.row == startRow) {
                 Position twoForward = new Position(from.row + 2 * direction, from.col);
                 if (board.getPieceAt(twoForward) == null) {
@@ -102,6 +109,7 @@ public class MoveGenerator {
             }
         }
 
+        // 3. Diagonal captures (only if an enemy piece is there)
         int[] captureCols = {from.col - 1, from.col + 1};
         for (int col : captureCols) {
             Position capturePos = new Position(from.row + direction, col);
@@ -109,12 +117,38 @@ public class MoveGenerator {
 
             Piece target = board.getPieceAt(capturePos);
             if (target != null && target.getColor() != color) {
-                moves.add(new Move(from, capturePos, pawn, target, false, false, null));
+                addPawnMove(moves, from, capturePos, pawn, target, promotionRow);
             }
         }
 
-        // NOTE: en passant and promotion not yet handled — added later
+        // 4. En passant capture
+        Position enPassantTarget = board.getEnPassantTarget();
+        if (enPassantTarget != null && enPassantTarget.row == from.row + direction) {
+            if (enPassantTarget.col == from.col - 1 || enPassantTarget.col == from.col + 1) {
+                // The captured pawn sits beside our pawn, not on the target square itself
+                Position capturedPawnPos = new Position(from.row, enPassantTarget.col);
+                Piece capturedPawn = board.getPieceAt(capturedPawnPos);
+                if (capturedPawn != null && capturedPawn.getType() == PieceType.PAWN
+                        && capturedPawn.getColor() != color) {
+                    moves.add(new Move(from, enPassantTarget, pawn, capturedPawn, false, true, null));
+                }
+            }
+        }
+
         return moves;
+    }
+
+    // Adds a pawn move — if it lands on the promotion rank, generates one move
+    // per possible promotion piece (Queen/Rook/Bishop/Knight) instead of one plain move.
+    private void addPawnMove(List<Move> moves, Position from, Position to, Piece pawn,
+                             Piece captured, int promotionRow) {
+        if (to.row == promotionRow) {
+            for (PieceType choice : PROMOTION_CHOICES) {
+                moves.add(new Move(from, to, pawn, captured, false, false, choice));
+            }
+        } else {
+            moves.add(new Move(from, to, pawn, captured, false, false, null));
+        }
     }
 
     public List<Move> generateKingMoves(Board board, Position from) {
@@ -130,8 +164,40 @@ public class MoveGenerator {
                 moves.add(new Move(from, to, king, target, false, false, null));
             }
         }
+
+        addCastlingMoves(board, from, king, moves);
         return moves;
-        // NOTE: castling not yet handled — added later
+    }
+
+    private void addCastlingMoves(Board board, Position kingPos, Piece king, List<Move> moves) {
+        Color color = king.getColor();
+        int row = kingPos.row;
+
+        // King must not currently be in check to castle at all
+        if (isSquareAttacked(board, kingPos, color.opposite())) return;
+
+        // Kingside (short) castling
+        if (board.canCastleKingside(color)) {
+            Position f = new Position(row, 5);
+            Position g = new Position(row, 6);
+            if (board.getPieceAt(f) == null && board.getPieceAt(g) == null
+                    && !isSquareAttacked(board, f, color.opposite())
+                    && !isSquareAttacked(board, g, color.opposite())) {
+                moves.add(new Move(kingPos, g, king, null, true, false, null));
+            }
+        }
+
+        // Queenside (long) castling
+        if (board.canCastleQueenside(color)) {
+            Position d = new Position(row, 3);
+            Position c = new Position(row, 2);
+            Position b = new Position(row, 1);
+            if (board.getPieceAt(d) == null && board.getPieceAt(c) == null && board.getPieceAt(b) == null
+                    && !isSquareAttacked(board, d, color.opposite())
+                    && !isSquareAttacked(board, c, color.opposite())) {
+                moves.add(new Move(kingPos, c, king, null, true, false, null));
+            }
+        }
     }
 
     public List<Move> generateMovesForPiece(Board board, Position from) {
@@ -148,7 +214,6 @@ public class MoveGenerator {
         };
     }
 
-    // Pseudo-legal: follows movement rules but may leave own king in check
     public List<Move> generateAllMoves(Board board, Color color) {
         List<Move> allMoves = new ArrayList<>();
 
@@ -165,22 +230,43 @@ public class MoveGenerator {
         return allMoves;
     }
 
-    // Is this square attacked by any piece of attackerColor?
-    // NOTE: for pawns this only detects attacks on OCCUPIED squares (since pawn
-    // captures require a target piece). Fine for king-safety checks since the
-    // king always occupies its square; would need adjusting for other uses
-    // like castling-through-check later.
     public boolean isSquareAttacked(Board board, Position square, Color attackerColor) {
-        List<Move> attackerMoves = generateAllMoves(board, attackerColor);
-        for (Move move : attackerMoves) {
-            if (move.to.equals(square)) {
-                return true;
+        // NOTE: uses only non-castling moves for attack detection, since castling
+        // itself can never "attack" a square, and to avoid infinite recursion
+        // (castling legality depends on isSquareAttacked).
+        for (int row = 0; row < 8; row++) {
+            for (int col = 0; col < 8; col++) {
+                Position pos = new Position(row, col);
+                Piece piece = board.getPieceAt(pos);
+                if (piece == null || piece.getColor() != attackerColor) continue;
+
+                List<Move> moves = (piece.getType() == PieceType.KING)
+                        ? generateKingAttackSquaresOnly(board, pos, piece)
+                        : generateMovesForPiece(board, pos);
+
+                for (Move move : moves) {
+                    if (move.to.equals(square)) return true;
+                }
             }
         }
         return false;
     }
 
-    // Truly legal moves: pseudo-legal moves that don't leave your own king in check
+    // King's basic 1-square attack pattern, WITHOUT castling — used only for
+    // attack-detection to avoid infinite recursion through addCastlingMoves.
+    private List<Move> generateKingAttackSquaresOnly(Board board, Position from, Piece king) {
+        List<Move> moves = new ArrayList<>();
+        for (int[] offset : KING_OFFSETS) {
+            Position to = new Position(from.row + offset[0], from.col + offset[1]);
+            if (!to.isOnBoard()) continue;
+            Piece target = board.getPieceAt(to);
+            if (target == null || target.getColor() != king.getColor()) {
+                moves.add(new Move(from, to, king, target, false, false, null));
+            }
+        }
+        return moves;
+    }
+
     public List<Move> generateLegalMoves(Board board, Color color) {
         List<Move> pseudoLegalMoves = generateAllMoves(board, color);
         List<Move> legalMoves = new ArrayList<>();

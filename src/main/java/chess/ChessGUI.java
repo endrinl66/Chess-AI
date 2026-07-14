@@ -2,17 +2,22 @@ package chess;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.geom.Ellipse2D;
+import java.awt.geom.RoundRectangle2D;
 import java.util.List;
 
 public class ChessGUI extends JPanel {
-    private static final int SQUARE_SIZE = 80;
-    private static final int BOARD_PIXELS = SQUARE_SIZE * 8;
-    private static final int MARGIN = 46; // increased to make room for coordinate labels
+    private static final int MARGIN = 46;
     private static final int SIDE_PANEL_WIDTH = 260;
     private static final int AI_SEARCH_DEPTH = 3;
+    private static final int MIN_SQUARE_SIZE = 30;
+    private static final int MAX_SQUARE_SIZE = 110;
+    private static final int ANIMATION_STEPS = 24;
+    private static final int ANIMATION_DELAY_MS = 16;
 
     private final Board board = new Board();
     private final MoveGenerator moveGenerator = new MoveGenerator();
@@ -26,6 +31,23 @@ public class ChessGUI extends JPanel {
     private List<MoveSuggestion> currentSuggestions = null;
     private boolean suggestionsLoading = false;
 
+    private int squareSize = 80;
+    private int boardPixels = squareSize * 8;
+    private int boardOriginX = MARGIN;
+    private int boardOriginY = MARGIN + 28;
+
+    private boolean animating = false;
+    private Move animatingMove = null;
+    private double animationProgress = 0.0;
+    private Timer animationTimer = null;
+
+    private int moveCount = 0;
+
+    // Game-over overlay state
+    private boolean gameOver = false;
+    private String gameOverTitle = "";
+    private String gameOverDetail = "";
+
     private static final String WHITE_SYMBOLS = "\u2659\u2658\u2657\u2656\u2655\u2654";
     private static final String BLACK_SYMBOLS = "\u265F\u265E\u265D\u265C\u265B\u265A";
     private static final String[] FILE_LETTERS = {"a", "b", "c", "d", "e", "f", "g", "h"};
@@ -36,32 +58,56 @@ public class ChessGUI extends JPanel {
     private static final java.awt.Color FRAME_WOOD_DARK = new java.awt.Color(58, 34, 18);
     private static final java.awt.Color BRASS = new java.awt.Color(200, 162, 84);
     private static final java.awt.Color SELECT_HIGHLIGHT = new java.awt.Color(200, 162, 84, 140);
-    private static final java.awt.Color MOVE_DOT = new java.awt.Color(46, 87, 56, 200); // forest green
+    private static final java.awt.Color MOVE_DOT = new java.awt.Color(46, 87, 56, 200);
     private static final java.awt.Color BACKDROP = new java.awt.Color(26, 20, 16);
     private static final java.awt.Color PARCHMENT = new java.awt.Color(233, 219, 188);
     private static final java.awt.Color PARCHMENT_EDGE = new java.awt.Color(150, 120, 80);
 
     public ChessGUI() {
-        int width = BOARD_PIXELS + MARGIN * 2 + SIDE_PANEL_WIDTH;
-        int height = BOARD_PIXELS + MARGIN * 2 + 40;
-        setPreferredSize(new Dimension(width, height));
+        setPreferredSize(new Dimension(80 * 8 + MARGIN * 2 + SIDE_PANEL_WIDTH, 80 * 8 + MARGIN * 2 + 40));
+        setMinimumSize(new Dimension(500, 400));
         setBackground(BACKDROP);
+
         addMouseListener(new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent e) {
-                handleClick(e.getX() - MARGIN, e.getY() - MARGIN - 28);
+                computeLayout();
+                handleClick(e.getX() - boardOriginX, e.getY() - boardOriginY);
             }
         });
+
+        addComponentListener(new ComponentAdapter() {
+            @Override
+            public void componentResized(ComponentEvent e) {
+                repaint();
+            }
+        });
+
         refreshSuggestions();
     }
 
+    private void computeLayout() {
+        int totalW = getWidth();
+        int totalH = getHeight();
+        int availableW = totalW - MARGIN * 2 - SIDE_PANEL_WIDTH;
+        int availableH = totalH - MARGIN * 2 - 40;
+        int boardSize = Math.max(MIN_SQUARE_SIZE * 8, Math.min(availableW, availableH));
+
+        squareSize = Math.max(MIN_SQUARE_SIZE, Math.min(MAX_SQUARE_SIZE, boardSize / 8));
+        boardPixels = squareSize * 8;
+        boardOriginX = MARGIN;
+        boardOriginY = MARGIN + 28;
+    }
+
     private void handleClick(int x, int y) {
+        if (gameOver) return;
+        if (animating) return;
         if (aiThinking) return;
         if (board.getTurn() != Color.WHITE) return;
-        if (x < 0 || x >= BOARD_PIXELS || y < 0 || y >= BOARD_PIXELS) return;
+        if (x < 0 || x >= boardPixels || y < 0 || y >= boardPixels) return;
 
-        int col = x / SQUARE_SIZE;
-        int row = 7 - (y / SQUARE_SIZE);
+        int col = x / squareSize;
+        int row = 7 - (y / squareSize);
         Position clicked = new Position(row, col);
         if (!clicked.isOnBoard()) return;
 
@@ -74,31 +120,53 @@ public class ChessGUI extends JPanel {
             }
         } else {
             Move chosenMove = findMoveTo(legalMovesForSelected, clicked);
-            if (chosenMove != null) {
-                board.applyMove(chosenMove);
-                board.switchTurn();
-                selectedSquare = null;
-                legalMovesForSelected = null;
-                currentSuggestions = null;
-                repaint();
-                checkGameEndOrTriggerAI();
-                return;
-            }
             selectedSquare = null;
             legalMovesForSelected = null;
+
+            if (chosenMove != null) {
+                Move moveToPlay = chosenMove;
+                animateMove(moveToPlay, () -> {
+                    board.applyMove(moveToPlay);
+                    board.switchTurn();
+                    moveCount++;
+                    currentSuggestions = null;
+                    repaint();
+                    checkGameEndOrTriggerAI();
+                });
+                return;
+            }
         }
         repaint();
     }
 
+    private void animateMove(Move move, Runnable onComplete) {
+        animating = true;
+        animatingMove = move;
+        animationProgress = 0.0;
+
+        animationTimer = new Timer(ANIMATION_DELAY_MS, null);
+        animationTimer.addActionListener(e -> {
+            animationProgress += 1.0 / ANIMATION_STEPS;
+            if (animationProgress >= 1.0) {
+                animationProgress = 1.0;
+                animationTimer.stop();
+                animating = false;
+                animatingMove = null;
+                onComplete.run();
+            } else {
+                repaint();
+            }
+        });
+        animationTimer.start();
+    }
+
     private void checkGameEndOrTriggerAI() {
         if (board.isCheckmate(Color.BLACK, moveGenerator)) {
-            statusText = "Checkmate! White wins.";
-            repaint();
+            declareGameOver("Checkmate!", "White triumphs in " + moveCount + " moves.");
             return;
         }
         if (board.isStalemate(Color.BLACK, moveGenerator)) {
-            statusText = "Stalemate - draw.";
-            repaint();
+            declareGameOver("Stalemate", "The game ends in a draw after " + moveCount + " moves.");
             return;
         }
 
@@ -109,37 +177,56 @@ public class ChessGUI extends JPanel {
         SwingWorker<Move, Void> worker = new SwingWorker<>() {
             @Override
             protected Move doInBackground() {
-                return ai.findBestMove(board, AI_SEARCH_DEPTH);
+                return ai.findBestMove(board.copy(), AI_SEARCH_DEPTH);
             }
 
             @Override
             protected void done() {
+                Move aiMove = null;
                 try {
-                    Move aiMove = get();
-                    if (aiMove != null) {
-                        board.applyMove(aiMove);
-                        board.switchTurn();
-                    }
+                    aiMove = get();
                 } catch (Exception ex) {
                     ex.printStackTrace();
                 }
-                aiThinking = false;
 
-                if (board.isCheckmate(Color.WHITE, moveGenerator)) {
-                    statusText = "Checkmate! Black (AI) wins.";
-                } else if (board.isStalemate(Color.WHITE, moveGenerator)) {
-                    statusText = "Stalemate - draw.";
-                } else {
-                    statusText = "Your move (White)";
-                    refreshSuggestions();
+                if (aiMove == null) {
+                    aiThinking = false;
+                    repaint();
+                    return;
                 }
-                repaint();
+
+                Move finalAiMove = aiMove;
+                animateMove(finalAiMove, () -> {
+                    board.applyMove(finalAiMove);
+                    board.switchTurn();
+                    moveCount++;
+                    aiThinking = false;
+
+                    if (board.isCheckmate(Color.WHITE, moveGenerator)) {
+                        declareGameOver("Checkmate!", "Black (AI) triumphs in " + moveCount + " moves.");
+                    } else if (board.isStalemate(Color.WHITE, moveGenerator)) {
+                        declareGameOver("Stalemate", "The game ends in a draw after " + moveCount + " moves.");
+                    } else {
+                        statusText = "Your move (White)";
+                        refreshSuggestions();
+                    }
+                    repaint();
+                });
             }
         };
         worker.execute();
     }
 
+    private void declareGameOver(String title, String detail) {
+        gameOver = true;
+        gameOverTitle = title;
+        gameOverDetail = detail;
+        statusText = title;
+        repaint();
+    }
+
     private void refreshSuggestions() {
+        if (gameOver) return;
         if (board.getTurn() != Color.WHITE) return;
         if (board.isCheckmate(Color.WHITE, moveGenerator) || board.isStalemate(Color.WHITE, moveGenerator)) return;
 
@@ -150,7 +237,7 @@ public class ChessGUI extends JPanel {
         SwingWorker<List<MoveSuggestion>, Void> worker = new SwingWorker<>() {
             @Override
             protected List<MoveSuggestion> doInBackground() {
-                return ai.getTopMoves(board, AI_SEARCH_DEPTH, 3);
+                return ai.getTopMoves(board.copy(), AI_SEARCH_DEPTH, 3);
             }
 
             @Override
@@ -186,6 +273,8 @@ public class ChessGUI extends JPanel {
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
+        computeLayout();
+
         Graphics2D g2 = (Graphics2D) g;
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
@@ -195,41 +284,88 @@ public class ChessGUI extends JPanel {
         g2.drawString(statusText, MARGIN, 22);
 
         Graphics2D boardG = (Graphics2D) g2.create();
-        boardG.translate(MARGIN, MARGIN + 28);
+        boardG.translate(boardOriginX, boardOriginY);
         drawWoodFrame(boardG);
         drawSquares(boardG);
         highlightSelection(boardG);
         drawPieces(boardG);
         drawCoordinateLabels(boardG);
+        if (gameOver) {
+            drawGameOverOverlay(boardG);
+        }
         boardG.dispose();
 
         Graphics2D panelG = (Graphics2D) g2.create();
-        panelG.translate(MARGIN + BOARD_PIXELS + 24, MARGIN + 28);
+        panelG.translate(boardOriginX + boardPixels + 24, boardOriginY);
         drawSuggestionPanel(panelG);
         panelG.dispose();
     }
 
+    // Draws a dark scrim over the board plus a centered parchment card
+    // announcing the result — like a "Game Over" card on a real table.
+    private void drawGameOverOverlay(Graphics2D g2) {
+        g2.setColor(new java.awt.Color(0, 0, 0, 130));
+        g2.fillRect(0, 0, boardPixels, boardPixels);
+
+        int cardWidth = Math.min(boardPixels - 40, 320);
+        int cardHeight = 150;
+        int cardX = (boardPixels - cardWidth) / 2;
+        int cardY = (boardPixels - cardHeight) / 2;
+
+        RoundRectangle2D card = new RoundRectangle2D.Double(cardX, cardY, cardWidth, cardHeight, 14, 14);
+        g2.setColor(PARCHMENT);
+        g2.fill(card);
+        g2.setColor(BRASS);
+        g2.setStroke(new BasicStroke(3f));
+        g2.draw(card);
+        g2.setStroke(new BasicStroke(1f));
+        RoundRectangle2D innerLine = new RoundRectangle2D.Double(cardX + 6, cardY + 6, cardWidth - 12, cardHeight - 12, 10, 10);
+        g2.draw(innerLine);
+
+        FontMetrics fm;
+
+        g2.setFont(new Font("Serif", Font.BOLD, 15));
+        g2.setColor(new java.awt.Color(90, 70, 40));
+        String header = "GAME OVER";
+        fm = g2.getFontMetrics();
+        g2.drawString(header, cardX + (cardWidth - fm.stringWidth(header)) / 2, cardY + 32);
+
+        g2.setFont(new Font("Serif", Font.BOLD, 24));
+        g2.setColor(new java.awt.Color(122, 24, 30));
+        fm = g2.getFontMetrics();
+        g2.drawString(gameOverTitle, cardX + (cardWidth - fm.stringWidth(gameOverTitle)) / 2, cardY + 72);
+
+        g2.setFont(new Font("Serif", Font.ITALIC, 14));
+        g2.setColor(new java.awt.Color(58, 34, 18));
+        fm = g2.getFontMetrics();
+        g2.drawString(gameOverDetail, cardX + (cardWidth - fm.stringWidth(gameOverDetail)) / 2, cardY + 105);
+
+        g2.setFont(new Font("Serif", Font.PLAIN, 12));
+        g2.setColor(new java.awt.Color(120, 100, 70));
+        String hint = "Close and relaunch to play again";
+        fm = g2.getFontMetrics();
+        g2.drawString(hint, cardX + (cardWidth - fm.stringWidth(hint)) / 2, cardY + 130);
+    }
+
     private void drawCoordinateLabels(Graphics2D g2) {
-        g2.setFont(new Font("Serif", Font.BOLD, 13));
+        g2.setFont(new Font("Serif", Font.BOLD, Math.max(11, squareSize / 6)));
         g2.setColor(BRASS);
 
-        // Rank numbers (1-8) along the left edge, outside the wood frame
         for (int row = 0; row < 8; row++) {
-            int y = (7 - row) * SQUARE_SIZE;
+            int y = (7 - row) * squareSize;
             String label = String.valueOf(row + 1);
-            g2.drawString(label, -34, y + SQUARE_SIZE / 2 + 5);
+            g2.drawString(label, -34, y + squareSize / 2 + 5);
         }
 
-        // File letters (a-h) along the bottom edge, outside the wood frame
         for (int col = 0; col < 8; col++) {
-            int x = col * SQUARE_SIZE;
+            int x = col * squareSize;
             String label = FILE_LETTERS[col];
-            g2.drawString(label, x + SQUARE_SIZE / 2 - 4, BOARD_PIXELS + 34);
+            g2.drawString(label, x + squareSize / 2 - 4, boardPixels + 34);
         }
     }
 
     private void drawSuggestionPanel(Graphics2D g2) {
-        int panelHeight = BOARD_PIXELS;
+        int panelHeight = boardPixels;
         int width = SIDE_PANEL_WIDTH - 24;
 
         g2.setColor(PARCHMENT);
@@ -246,6 +382,11 @@ public class ChessGUI extends JPanel {
 
         g2.setFont(new Font("Serif", Font.PLAIN, 13));
         int y = 62;
+
+        if (gameOver) {
+            g2.drawString("The game has concluded.", 16, y);
+            return;
+        }
 
         if (suggestionsLoading) {
             g2.drawString("Consulting the tomes...", 16, y);
@@ -286,31 +427,31 @@ public class ChessGUI extends JPanel {
         int pad = 16;
         GradientPaint woodGradient = new GradientPaint(
                 -pad, -pad, FRAME_WOOD_LIGHT,
-                BOARD_PIXELS + pad, BOARD_PIXELS + pad, FRAME_WOOD_DARK);
+                boardPixels + pad, boardPixels + pad, FRAME_WOOD_DARK);
         g2.setPaint(woodGradient);
-        g2.fillRect(-pad, -pad, BOARD_PIXELS + pad * 2, BOARD_PIXELS + pad * 2);
+        g2.fillRect(-pad, -pad, boardPixels + pad * 2, boardPixels + pad * 2);
 
         g2.setColor(BRASS);
         g2.setStroke(new BasicStroke(3f));
-        g2.drawRect(-pad + 4, -pad + 4, BOARD_PIXELS + pad * 2 - 8, BOARD_PIXELS + pad * 2 - 8);
+        g2.drawRect(-pad + 4, -pad + 4, boardPixels + pad * 2 - 8, boardPixels + pad * 2 - 8);
         g2.setStroke(new BasicStroke(1f));
-        g2.drawRect(-4, -4, BOARD_PIXELS + 8, BOARD_PIXELS + 8);
+        g2.drawRect(-4, -4, boardPixels + 8, boardPixels + 8);
     }
 
     private void drawSquares(Graphics2D g2) {
         for (int row = 0; row < 8; row++) {
             for (int col = 0; col < 8; col++) {
                 boolean isLight = (row + col) % 2 == 0;
-                int x = col * SQUARE_SIZE;
-                int y = (7 - row) * SQUARE_SIZE;
+                int x = col * squareSize;
+                int y = (7 - row) * squareSize;
 
                 java.awt.Color base = isLight ? LIGHT_SQUARE : DARK_SQUARE;
                 java.awt.Color shade = isLight
                         ? new java.awt.Color(225, 208, 176)
                         : new java.awt.Color(90, 54, 30);
-                GradientPaint squareGradient = new GradientPaint(x, y, base, x + SQUARE_SIZE, y + SQUARE_SIZE, shade);
+                GradientPaint squareGradient = new GradientPaint(x, y, base, x + squareSize, y + squareSize, shade);
                 g2.setPaint(squareGradient);
-                g2.fillRect(x, y, SQUARE_SIZE, SQUARE_SIZE);
+                g2.fillRect(x, y, squareSize, squareSize);
             }
         }
     }
@@ -318,17 +459,17 @@ public class ChessGUI extends JPanel {
     private void highlightSelection(Graphics2D g2) {
         if (selectedSquare != null) {
             g2.setColor(SELECT_HIGHLIGHT);
-            int x = selectedSquare.col * SQUARE_SIZE;
-            int y = (7 - selectedSquare.row) * SQUARE_SIZE;
-            g2.fillRect(x, y, SQUARE_SIZE, SQUARE_SIZE);
+            int x = selectedSquare.col * squareSize;
+            int y = (7 - selectedSquare.row) * squareSize;
+            g2.fillRect(x, y, squareSize, squareSize);
 
             if (legalMovesForSelected != null) {
                 for (Move m : legalMovesForSelected) {
-                    int mx = m.to.col * SQUARE_SIZE;
-                    int my = (7 - m.to.row) * SQUARE_SIZE;
-                    int r = SQUARE_SIZE / 3;
+                    int mx = m.to.col * squareSize;
+                    int my = (7 - m.to.row) * squareSize;
+                    int r = squareSize / 3;
                     Ellipse2D dot = new Ellipse2D.Double(
-                            mx + (SQUARE_SIZE - r) / 2.0, my + (SQUARE_SIZE - r) / 2.0, r, r);
+                            mx + (squareSize - r) / 2.0, my + (squareSize - r) / 2.0, r, r);
                     g2.setColor(MOVE_DOT);
                     g2.fill(dot);
                 }
@@ -337,46 +478,73 @@ public class ChessGUI extends JPanel {
     }
 
     private void drawPieces(Graphics2D g2) {
-        Font pieceFont = new Font("Segoe UI Symbol", Font.PLAIN, SQUARE_SIZE - 6);
+        for (int row = 0; row < 8; row++) {
+            for (int col = 0; col < 8; col++) {
+                Position pos = new Position(row, col);
+
+                if (animating && animatingMove != null && animatingMove.from.equals(pos)) {
+                    continue;
+                }
+
+                Piece p = board.getPieceAt(pos);
+                if (p == null) continue;
+
+                int x = col * squareSize;
+                int y = (7 - row) * squareSize;
+                drawPieceGlyph(g2, p, x, y);
+            }
+        }
+
+        if (animating && animatingMove != null) {
+            double t = easeInOut(animationProgress);
+
+            int fromX = animatingMove.from.col * squareSize;
+            int fromY = (7 - animatingMove.from.row) * squareSize;
+            int toX = animatingMove.to.col * squareSize;
+            int toY = (7 - animatingMove.to.row) * squareSize;
+
+            int curX = (int) (fromX + (toX - fromX) * t);
+            int curY = (int) (fromY + (toY - fromY) * t);
+
+            drawPieceGlyph(g2, animatingMove.movedPiece, curX, curY);
+        }
+    }
+
+    private double easeInOut(double t) {
+        return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    }
+
+    private void drawPieceGlyph(Graphics2D g2, Piece p, int x, int y) {
+        Font pieceFont = new Font("Segoe UI Symbol", Font.PLAIN, Math.max(14, squareSize - 6));
         if (!pieceFont.getFamily().equals("Segoe UI Symbol")) {
-            pieceFont = new Font("Serif", Font.BOLD, SQUARE_SIZE - 10);
+            pieceFont = new Font("Serif", Font.BOLD, Math.max(14, squareSize - 10));
         }
         g2.setFont(pieceFont);
 
-        for (int row = 0; row < 8; row++) {
-            for (int col = 0; col < 8; col++) {
-                Piece p = board.getPieceAt(new Position(row, col));
-                if (p == null) continue;
+        String symbol = (p.getColor() == Color.WHITE)
+                ? String.valueOf(WHITE_SYMBOLS.charAt(p.getType().ordinal()))
+                : String.valueOf(BLACK_SYMBOLS.charAt(p.getType().ordinal()));
 
-                String symbol = (p.getColor() == Color.WHITE)
-                        ? String.valueOf(WHITE_SYMBOLS.charAt(p.getType().ordinal()))
-                        : String.valueOf(BLACK_SYMBOLS.charAt(p.getType().ordinal()));
+        FontMetrics fm = g2.getFontMetrics();
+        int textWidth = fm.stringWidth(symbol);
+        int textX = x + (squareSize - textWidth) / 2;
+        int textY = y + ((squareSize - fm.getHeight()) / 2) + fm.getAscent();
 
-                int x = col * SQUARE_SIZE;
-                int y = (7 - row) * SQUARE_SIZE;
+        g2.setColor(new java.awt.Color(0, 0, 0, 70));
+        Ellipse2D shadow = new Ellipse2D.Double(
+                x + squareSize * 0.22, y + squareSize * 0.78, squareSize * 0.56, squareSize * 0.14);
+        g2.fill(shadow);
 
-                FontMetrics fm = g2.getFontMetrics();
-                int textWidth = fm.stringWidth(symbol);
-                int textX = x + (SQUARE_SIZE - textWidth) / 2;
-                int textY = y + ((SQUARE_SIZE - fm.getHeight()) / 2) + fm.getAscent();
-
-                g2.setColor(new java.awt.Color(0, 0, 0, 70));
-                Ellipse2D shadow = new Ellipse2D.Double(
-                        x + SQUARE_SIZE * 0.22, y + SQUARE_SIZE * 0.78, SQUARE_SIZE * 0.56, SQUARE_SIZE * 0.14);
-                g2.fill(shadow);
-
-                if (p.getColor() == Color.WHITE) {
-                    GradientPaint ivory = new GradientPaint(
-                            textX, textY - fm.getAscent(), new java.awt.Color(255, 250, 235),
-                            textX, textY, new java.awt.Color(212, 191, 152));
-                    drawEmbossedGlyph(g2, symbol, textX, textY, ivory, new java.awt.Color(120, 90, 50));
-                } else {
-                    GradientPaint walnut = new GradientPaint(
-                            textX, textY - fm.getAscent(), new java.awt.Color(70, 45, 30),
-                            textX, textY, new java.awt.Color(20, 12, 8));
-                    drawEmbossedGlyph(g2, symbol, textX, textY, walnut, BRASS);
-                }
-            }
+        if (p.getColor() == Color.WHITE) {
+            GradientPaint ivory = new GradientPaint(
+                    textX, textY - fm.getAscent(), new java.awt.Color(255, 250, 235),
+                    textX, textY, new java.awt.Color(212, 191, 152));
+            drawEmbossedGlyph(g2, symbol, textX, textY, ivory, new java.awt.Color(120, 90, 50));
+        } else {
+            GradientPaint walnut = new GradientPaint(
+                    textX, textY - fm.getAscent(), new java.awt.Color(70, 45, 30),
+                    textX, textY, new java.awt.Color(20, 12, 8));
+            drawEmbossedGlyph(g2, symbol, textX, textY, walnut, BRASS);
         }
     }
 
@@ -399,6 +567,7 @@ public class ChessGUI extends JPanel {
         frame.add(new ChessGUI());
         frame.pack();
         frame.setLocationRelativeTo(null);
+        frame.setResizable(true);
         frame.setVisible(true);
     }
 }
