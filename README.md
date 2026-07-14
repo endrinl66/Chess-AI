@@ -1,139 +1,202 @@
-# Chess AI — Parlour Edition
+<div align="center">
 
-A chess engine and GUI built entirely from scratch in Java — no chess libraries,
-no external engines. Play against an AI opponent powered by minimax with
-alpha-beta pruning, and see its top 3 candidate moves with estimated win
-probabilities before you move, styled after a 19th-century parlour chess set.
+# ♟️ Chess AI — Parlour Edition
+
+**A complete chess engine and AI opponent, built entirely from scratch in Java.**
+
+No chess libraries. No external engines. Every rule, every algorithm,
+every pixel of the board — hand-built and tested.
+
+![Java](https://img.shields.io/badge/Java-21-orange?logo=openjdk&logoColor=white)
+![Maven](https://img.shields.io/badge/Build-Maven-red?logo=apachemaven)
+![Tests](https://img.shields.io/badge/Tests-7%20passing-brightgreen)
+![License](https://img.shields.io/badge/License-Educational%20Use-blue)
 
 ![Chess AI screenshot](screenshots/board.png)
 
-## Features
+</div>
 
-- **Full legal move generation** for all six piece types, including pins,
-  checks, castling (both sides), en passant, and pawn promotion
-- **Checkmate and stalemate detection**
-- **AI opponent** using minimax search with alpha-beta pruning and a
-  positional evaluation function (material + piece-square tables)
-- **"Advisor's Counsel" panel** — the AI's top 3 candidate moves for the
-  current position, each with an estimated win probability
-- **Custom GUI** (Java Swing) with animated piece movement, a responsive
-  board that scales with the window, a pawn-promotion choice dialog, and a
-  game-over overlay
-- **7 passing JUnit tests** covering move generation, pins, checkmate
-  detection, castling, en passant, and promotion
+---
 
-## How to run it
+## 🚀 Quick Start
 
-### Option 1 — Run the packaged JAR (no setup required)
-Download `Chess-AI-1.0-SNAPSHOT.jar` from the [Releases](../../releases) page
-(or from `target/` if building from source) and run:
-
-```
-java -jar Chess-AI-1.0-SNAPSHOT.jar
-```
-
-Requires Java 17 or newer installed.
-
-### Option 2 — Run from source
-```
-git clone https://github.com/<your-username>/Chess-AI.git
+```bash
+git clone https://github.com/endrinl66/Chess-AI.git
 cd Chess-AI
 mvn compile
 mvn exec:java -Dexec.mainClass="chess.ChessGUI"
 ```
 
-Or open the project in IntelliJ IDEA, let Maven sync, and run
-`ChessGUI.main()` directly.
+Or grab the pre-built JAR from [Releases](../../releases) and run:
 
-### Running the tests
-```
-mvn test
+```bash
+java -jar Chess-AI-1.0-SNAPSHOT.jar
 ```
 
-## Architecture
+Requires **Java 17+**.
+
+---
+
+## 📋 Table of Contents
+
+- [What This Project Demonstrates](#-what-this-project-demonstrates)
+- [Features](#-features)
+- [Architecture](#-architecture)
+- [How the AI Works](#-how-the-ai-works)
+- [Difficulty Levels](#-difficulty-levels)
+- [Testing](#-testing)
+- [Known Limitations](#-known-limitations)
+- [Future Improvements](#-future-improvements)
+- [Tech Stack](#-tech-stack)
+
+---
+
+## 🎯 What This Project Demonstrates
+
+- **Real algorithms, not glue code** — minimax with alpha-beta pruning,
+  implemented from first principles, not a wrapped library
+- **Rigorous, incremental verification** — every layer (move generation,
+  check detection, castling, en passant) was built and confirmed correct
+  against known results before the next layer was added
+- **Full-stack Java skills** — from low-level game logic to a custom-painted
+  Swing GUI with animation, responsive layout, and interactive controls
+- **Honest engineering communication** — this README states plainly what's
+  a genuine algorithmic result vs. a UX heuristic (see the win-probability
+  note below)
+
+---
+
+## ✨ Features
+
+| Feature | Description |
+|---|---|
+| ♟️ **Full legal move generation** | All six piece types — pins, checks, castling (both sides), en passant, pawn promotion |
+| 👑 **Checkmate & stalemate detection** | The game correctly recognizes and announces the end of a match |
+| 🧠 **AI opponent** | Minimax search + alpha-beta pruning, evaluating positions via material + piece-square tables |
+| 🎚️ **Adjustable difficulty** | Easy / Medium / Hard — switch live from the top bar |
+| 💡 **"Advisor's Counsel" panel** | Top 3 candidate moves for the current position, each with an estimated win probability |
+| 🎨 **Fully custom GUI** | Animated piece movement, a board that scales with the window, promotion dialog, game-over overlay |
+| ⏱️ **Live performance feedback** | Status bar shows exactly how long the AI took to "think" on its last move |
+| ✅ **7 passing JUnit tests** | Move generation, pins, checkmate, castling, en passant, promotion |
+
+---
+
+## 🏗️ Architecture
 
 ```
 src/main/java/chess/
-  Color.java          — enum: WHITE, BLACK
-  PieceType.java       — enum: PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING
-  Piece.java            — a piece: type + color
-  Position.java          — a board square (row, col)
-  Move.java                — a move: from, to, captured piece, castling/
-                              en passant/promotion flags
-  Board.java                 — 8x8 grid, turn tracking, castling rights,
-                                en passant target, apply/undo move logic
-  MoveGenerator.java          — legal move generation for every piece type,
-                                 check detection, castling/en passant rules
-  Evaluator.java                — position scoring: material + piece-square
-                                   tables
-  ChessAI.java                    — minimax search with alpha-beta pruning,
-                                     move ranking
-  WinProbability.java               — converts an evaluation score into an
-                                       estimated win percentage
-  MoveSuggestion.java                — a candidate move + its score + win %
-  ChessGUI.java                       — the Swing UI: board rendering,
-                                         animation, input handling, the
-                                         suggestion panel
+├── Color.java             enum — WHITE, BLACK
+├── PieceType.java          enum — PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING
+├── Piece.java               a piece: type + color
+├── Position.java             a board square (row, col)
+├── Move.java                   a move: from, to, captured piece,
+│                                castling / en passant / promotion flags
+├── Board.java                   8x8 grid, turn tracking, castling rights,
+│                                 en passant target, apply/undo move logic
+├── MoveGenerator.java           legal move generation, check detection,
+│                                 castling & en passant rules
+├── Evaluator.java                position scoring — material + piece-
+│                                  square tables
+├── ChessAI.java                   minimax + alpha-beta pruning, move
+│                                   ranking
+├── WinProbability.java             eval score → estimated win %
+├── MoveSuggestion.java              a candidate move + score + win %
+└── ChessGUI.java                     the Swing UI — rendering, animation,
+                                       input, difficulty selector, panel
 ```
 
-Each class was built and verified incrementally — move generation was tested
-against known correct results (20 legal opening moves for White; a hand-built
-pinned-piece position; a scripted back-rank checkmate) before the AI was
-layered on top of it.
+Each class was built and verified **incrementally**: move generation was
+tested against known-correct results — 20 legal opening moves for White, a
+hand-built pinned-piece position, a scripted back-rank checkmate — before
+the AI was ever layered on top.
 
-## How the AI works
+---
+
+## 🧠 How the AI Works
 
 1. **Move generation** produces every legal move for the side to move,
-   filtering out any move that would leave the mover's own king in check
-   (this is what correctly handles pins).
-2. **Evaluation** scores a position from White's perspective: positive means
-   White is better, negative means Black is better. The score combines raw
-   material count with piece-square tables — positional bonuses/penalties
-   based on where each piece stands (e.g., knights are stronger centralized).
+   filtering out any move that would leave the mover's own king in check —
+   correctly handling pins.
+2. **Evaluation** scores a position from White's perspective (positive =
+   White is better) by combining material count with piece-square tables —
+   positional bonuses based on where each piece stands.
 3. **Minimax with alpha-beta pruning** searches several moves ahead,
-   assuming both sides play their best available move at each step.
-   Alpha-beta pruning skips branches that can't possibly affect the final
-   decision, which measurably reduces the number of positions the engine has
-   to evaluate at a given search depth.
-4. **Move ranking** runs this search across every legal move in the current
-   position (not just the best one), so the top 3 can be shown with their
-   respective scores.
-5. **Win probability** is a logistic transform of the evaluation score,
-   similar in spirit to how sites like Lichess present an evaluation bar as
-   a percentage.
+   assuming both sides play their best move at each step. Alpha-beta
+   pruning skips branches that can't affect the final decision, measurably
+   reducing positions evaluated at a given depth.
+4. **Move ranking** runs this search across *every* legal move (not just
+   the best one), so the top 3 can be shown together with their scores.
+5. **Win probability** is a logistic transform of the evaluation score —
+   similar in spirit to how Lichess presents its evaluation bar as a
+   percentage.
 
-**A note on honesty**: the win-probability figure is a heuristic derived from
-this engine's own evaluation score — it is *not* a statistically calibrated
-probability based on real game outcomes (which would require training against
-a large dataset of completed games). It's a useful, intuitive way to present
-"how good is this move" at a glance, not a rigorous prediction.
+> **Honesty note:** the win-probability figure is a heuristic derived from
+> this engine's own evaluation score — it is *not* a statistically
+> calibrated probability from real game outcomes (which would require
+> training on a large dataset of completed games). It's an intuitive way to
+> present "how good is this move," not a rigorous prediction.
 
-## Known limitations
+---
 
-- The knight's move generation, evaluation, and search are all fully general,
-  but the GUI's piece rendering uses standard Unicode chess glyphs rather
-  than custom artwork.
-- There is currently no support for offering/accepting a draw, resigning, or
-  move history / undo during play (though `Board.undoMove()` exists
-  internally and is used by the AI's search).
-- The AI's search depth is fixed; there's no time-based "think longer on hard
-  positions" logic.
+## 🎚️ Difficulty Levels
 
-## Possible future improvements
+| Level | Search depth |
+|:---|:---:|
+| Easy | 2 plies |
+| Medium | 3 plies |
+| Hard | 4 plies |
 
-- Move ordering (searching likely-good moves first) to make alpha-beta
-  pruning more effective at greater depth
-- An opening book for stronger, faster early-game play
-- Adjustable difficulty (exposed search depth, or a simple/strong toggle)
-- Move history with algebraic notation and the ability to undo/redo during
-  play
+Minimax's cost grows quickly with depth, so higher difficulty means both
+stronger play *and* longer "thinking" time — visible directly via the
+on-screen millisecond timer, not just claimed here.
 
-## Tech stack
+---
 
-- Java 21, Maven
-- Java Swing for the GUI (no external UI frameworks)
-- JUnit 5 for testing
+## ✅ Testing
 
-## License
+```bash
+mvn test
+```
 
-This project is available for personal and educational use.
+**7 JUnit tests**, targeting the logic most likely to hide subtle bugs:
+
+- ✔️ Starting position produces exactly 20 legal moves for White
+- ✔️ Starting position evaluates as perfectly balanced
+- ✔️ A pinned piece cannot make an illegal move
+- ✔️ Back-rank checkmate is detected correctly
+- ✔️ A pawn on the final rank offers all 4 promotion choices
+- ✔️ Castling correctly moves both the king and rook
+- ✔️ En passant captures the correct pawn and clears the correct square
+
+---
+
+## ⚠️ Known Limitations
+
+- Pieces render as styled Unicode chess glyphs rather than fully custom
+  vector artwork
+- No draw offers, resignation, or move history/undo during play (though
+  `Board.undoMove()` exists internally for the AI's search)
+- Search depth is the only difficulty lever — no time-based "think longer"
+  logic, and suggestion quality always matches the AI's own move quality
+
+---
+
+## 🔭 Future Improvements
+
+- **Move ordering** for more effective pruning at greater depth
+- **Opening book** for stronger, faster early-game play
+- **Move history** in algebraic notation, with undo/redo
+
+---
+
+## 🛠️ Tech Stack
+
+`Java 21` · `Maven` · `Java Swing` · `JUnit 5`
+
+---
+
+<div align="center">
+
+*This project is available for personal and educational use.*
+
+</div>
