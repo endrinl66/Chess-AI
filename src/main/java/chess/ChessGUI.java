@@ -16,14 +16,15 @@ import java.util.List;
 import java.util.ArrayList;
 
 public class ChessGUI extends JPanel {
-    private static final int MARGIN = 50;
+    private static final int MARGIN = 40;
     private static final int SIDE_PANEL_WIDTH = 300;
-    private static final int AI_SEARCH_DEPTH = 3;
     private static final int MIN_SQUARE_SIZE = 40;
     private static final int MAX_SQUARE_SIZE = 150;
     private static final int DEFAULT_SQUARE_SIZE = 115;
     private static final int ANIMATION_STEPS = 24;
     private static final int ANIMATION_DELAY_MS = 16;
+
+    private int aiSearchDepth = 3;
 
     private final Board board = new Board();
     private final MoveGenerator moveGenerator = new MoveGenerator();
@@ -34,13 +35,15 @@ public class ChessGUI extends JPanel {
     private String statusText = "Your move (White)";
     private boolean aiThinking = false;
 
+    private final JLabel statusLabel = new JLabel("Your move (White)");
+
     private List<MoveSuggestion> currentSuggestions = null;
     private boolean suggestionsLoading = false;
 
     private int squareSize = DEFAULT_SQUARE_SIZE;
     private int boardPixels = squareSize * 8;
     private int boardOriginX = MARGIN;
-    private int boardOriginY = MARGIN + 30;
+    private int boardOriginY = MARGIN;
 
     private boolean animating = false;
     private Move animatingMove = null;
@@ -48,13 +51,14 @@ public class ChessGUI extends JPanel {
     private Timer animationTimer = null;
 
     private int moveCount = 0;
+    private long lastMoveTimeMs = 0;
 
     private boolean gameOver = false;
     private String gameOverTitle = "";
     private String gameOverDetail = "";
 
-    private static final String WHITE_SYMBOLS = "\u2659\u2658\u2657\u2656\u2655\u2654"; // P N B R Q K
-    private static final String BLACK_SYMBOLS = "\u265F\u265E\u265D\u265C\u265B\u265A"; // p n b r q k
+    private static final String WHITE_SYMBOLS = "\u2659\u2658\u2657\u2656\u2655\u2654";
+    private static final String BLACK_SYMBOLS = "\u265F\u265E\u265D\u265C\u265B\u265A";
     private static final String[] FILE_LETTERS = {"a", "b", "c", "d", "e", "f", "g", "h"};
 
     private static final java.awt.Color SQUARE_BLACK_TOP = new java.awt.Color(38, 34, 34);
@@ -71,18 +75,27 @@ public class ChessGUI extends JPanel {
     private static final java.awt.Color PARCHMENT = new java.awt.Color(24, 18, 18);
     private static final java.awt.Color PARCHMENT_EDGE = new java.awt.Color(190, 20, 28);
 
+    private static final java.awt.Color CONTROL_LIGHT = new java.awt.Color(240, 225, 200);
+    private static final java.awt.Color CONTROL_TEXT_DARK = java.awt.Color.BLACK;
+    private static final java.awt.Color CONTROL_SELECTED = new java.awt.Color(200, 40, 50);
+
     private static final java.awt.Color GLASS_RED_LIGHT = new java.awt.Color(255, 110, 105);
     private static final java.awt.Color GLASS_RED_DARK = new java.awt.Color(110, 6, 10);
     private static final java.awt.Color GLASS_BLACK_LIGHT = new java.awt.Color(80, 76, 76);
     private static final java.awt.Color GLASS_BLACK_DARK = new java.awt.Color(3, 2, 2);
     private static final java.awt.Color GLASS_OUTLINE = new java.awt.Color(0, 0, 0, 200);
 
+    private static final Font TOP_BAR_FONT = new Font("Serif", Font.BOLD, 16);
+
     public ChessGUI() {
         setPreferredSize(new Dimension(
                 DEFAULT_SQUARE_SIZE * 8 + MARGIN * 2 + SIDE_PANEL_WIDTH,
-                DEFAULT_SQUARE_SIZE * 8 + MARGIN * 2 + 44));
-        setMinimumSize(new Dimension(600, 480));
+                DEFAULT_SQUARE_SIZE * 8 + MARGIN * 2));
+        setMinimumSize(new Dimension(600, 460));
         setBackground(BACKDROP);
+
+        statusLabel.setFont(TOP_BAR_FONT);
+        statusLabel.setForeground(GOLD_ACCENT);
 
         addMouseListener(new MouseAdapter() {
             @Override
@@ -102,17 +115,115 @@ public class ChessGUI extends JPanel {
         refreshSuggestions();
     }
 
+    private void setStatus(String text) {
+        statusText = text;
+        statusLabel.setText(text);
+    }
+
+    public JPanel buildTopBar() {
+        JPanel topBar = new JPanel(new BorderLayout());
+        topBar.setBackground(BACKDROP);
+        topBar.setBorder(BorderFactory.createEmptyBorder(10, MARGIN, 6, MARGIN));
+
+        topBar.add(statusLabel, BorderLayout.WEST);
+        topBar.add(buildDifficultyControls(), BorderLayout.EAST);
+
+        return topBar;
+    }
+
+    public void setSearchDepth(int depth) {
+        this.aiSearchDepth = depth;
+        if (!aiThinking && !gameOver && board.getTurn() == Color.WHITE) {
+            refreshSuggestions();
+        }
+    }
+
+    private JPanel buildDifficultyControls() {
+        JPanel controls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        controls.setBackground(BACKDROP);
+
+        JLabel label = new JLabel("Difficulty:");
+        label.setFont(TOP_BAR_FONT);
+        label.setForeground(GOLD_ACCENT);
+
+        String[] levels = {"Easy", "Medium", "Hard"};
+        JComboBox<String> difficultySelector = new JComboBox<>(levels);
+        difficultySelector.setSelectedIndex(1);
+        difficultySelector.setFont(TOP_BAR_FONT);
+        difficultySelector.setBackground(CONTROL_LIGHT);
+        difficultySelector.setForeground(CONTROL_TEXT_DARK);
+        difficultySelector.setOpaque(true);
+        difficultySelector.setFocusable(false);
+        difficultySelector.setPreferredSize(new Dimension(130, 32));
+        difficultySelector.setBorder(BorderFactory.createLineBorder(GOLD_ACCENT, 2));
+
+        difficultySelector.setRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(JList<?> list, Object value,
+                                                          int index, boolean isSelected, boolean cellHasFocus) {
+                JLabel c = (JLabel) super.getListCellRendererComponent(
+                        list, value, index, isSelected, cellHasFocus);
+                c.setOpaque(true);
+                c.setFont(TOP_BAR_FONT);
+                c.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
+                if (isSelected) {
+                    c.setBackground(CONTROL_SELECTED);
+                    c.setForeground(java.awt.Color.WHITE);
+                } else {
+                    c.setBackground(CONTROL_LIGHT);
+                    c.setForeground(CONTROL_TEXT_DARK);
+                }
+                return c;
+            }
+        });
+
+        difficultySelector.addPopupMenuListener(new javax.swing.event.PopupMenuListener() {
+            @Override
+            public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent e) {
+                Object popupComponent = difficultySelector.getUI().getAccessibleChild(difficultySelector, 0);
+                if (popupComponent instanceof javax.swing.plaf.basic.ComboPopup comboPopup) {
+                    JList<?> popupList = comboPopup.getList();
+                    popupList.setBackground(CONTROL_LIGHT);
+                    popupList.setForeground(CONTROL_TEXT_DARK);
+                    popupList.setSelectionBackground(CONTROL_SELECTED);
+                    popupList.setSelectionForeground(java.awt.Color.WHITE);
+                    popupList.setOpaque(true);
+                }
+            }
+
+            @Override
+            public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent e) {}
+
+            @Override
+            public void popupMenuCanceled(javax.swing.event.PopupMenuEvent e) {}
+        });
+
+        difficultySelector.addActionListener(e -> {
+            int selected = difficultySelector.getSelectedIndex();
+            int depth = switch (selected) {
+                case 0 -> 2;
+                case 2 -> 4;
+                default -> 3;
+            };
+            setSearchDepth(depth);
+        });
+
+        controls.add(label);
+        controls.add(difficultySelector);
+        return controls;
+    }
+
     private void computeLayout() {
         int totalW = getWidth();
         int totalH = getHeight();
         int availableW = totalW - MARGIN * 2 - SIDE_PANEL_WIDTH;
-        int availableH = totalH - MARGIN * 2 - 44;
+        int availableH = totalH - MARGIN * 2;
         int boardSize = Math.max(MIN_SQUARE_SIZE * 8, Math.min(availableW, availableH));
 
         squareSize = Math.max(MIN_SQUARE_SIZE, Math.min(MAX_SQUARE_SIZE, boardSize / 8));
         boardPixels = squareSize * 8;
         boardOriginX = MARGIN;
-        boardOriginY = MARGIN + 30;
+        boardOriginY = MARGIN;
     }
 
     private void handleClick(int x, int y) {
@@ -223,14 +334,19 @@ public class ChessGUI extends JPanel {
             return;
         }
 
-        statusText = "Black (AI) is thinking...";
+        setStatus("Black (AI) is thinking...");
         aiThinking = true;
         repaint();
+
+        int searchDepthForThisMove = aiSearchDepth;
 
         SwingWorker<Move, Void> worker = new SwingWorker<>() {
             @Override
             protected Move doInBackground() {
-                return ai.findBestMove(board.copy(), AI_SEARCH_DEPTH);
+                long start = System.currentTimeMillis();
+                Move result = ai.findBestMove(board.copy(), searchDepthForThisMove);
+                lastMoveTimeMs = System.currentTimeMillis() - start;
+                return result;
             }
 
             @Override
@@ -260,7 +376,7 @@ public class ChessGUI extends JPanel {
                     } else if (board.isStalemate(Color.WHITE, moveGenerator)) {
                         declareGameOver("Stalemate", "The game ends in a draw after " + moveCount + " moves.");
                     } else {
-                        statusText = "Your move (White)";
+                        setStatus("Your move (White) \u2014 AI took " + lastMoveTimeMs + "ms");
                         refreshSuggestions();
                     }
                     repaint();
@@ -274,7 +390,7 @@ public class ChessGUI extends JPanel {
         gameOver = true;
         gameOverTitle = title;
         gameOverDetail = detail;
-        statusText = title;
+        setStatus(title);
         repaint();
     }
 
@@ -287,10 +403,12 @@ public class ChessGUI extends JPanel {
         currentSuggestions = null;
         repaint();
 
+        int searchDepthForThisAnalysis = aiSearchDepth;
+
         SwingWorker<List<MoveSuggestion>, Void> worker = new SwingWorker<>() {
             @Override
             protected List<MoveSuggestion> doInBackground() {
-                return ai.getTopMoves(board.copy(), AI_SEARCH_DEPTH, 3);
+                return ai.getTopMoves(board.copy(), searchDepthForThisAnalysis, 3);
             }
 
             @Override
@@ -324,10 +442,6 @@ public class ChessGUI extends JPanel {
         Graphics2D g2 = (Graphics2D) g;
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-
-        g2.setColor(GOLD_ACCENT);
-        g2.setFont(new Font("Serif", Font.BOLD, 18));
-        g2.drawString(statusText, MARGIN, 26);
 
         Graphics2D boardG = (Graphics2D) g2.create();
         boardG.translate(boardOriginX, boardOriginY);
@@ -409,9 +523,6 @@ public class ChessGUI extends JPanel {
         }
     }
 
-    // Renders the side panel as if the AI is narrating its own analysis:
-    // an intro line describing what it just did, followed by the ranked
-    // moves and their win probabilities.
     private void drawSuggestionPanel(Graphics2D g2) {
         int panelHeight = boardPixels;
         int width = SIDE_PANEL_WIDTH - 28;
@@ -451,7 +562,6 @@ public class ChessGUI extends JPanel {
             return;
         }
 
-        // Conversational intro, wrapped across two lines to fit the panel width
         g2.setFont(new Font("Serif", Font.ITALIC, 13));
         g2.setColor(new java.awt.Color(210, 195, 195));
         g2.drawString("I analyzed the position and found", 18, y);
@@ -647,7 +757,13 @@ public class ChessGUI extends JPanel {
         JFrame frame = new JFrame("Chess AI \u2014 Crimson Glass Edition");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.getContentPane().setBackground(BACKDROP);
-        frame.add(new ChessGUI());
+        frame.setLayout(new BorderLayout());
+
+        ChessGUI chessPanel = new ChessGUI();
+
+        frame.add(chessPanel.buildTopBar(), BorderLayout.NORTH);
+        frame.add(chessPanel, BorderLayout.CENTER);
+
         frame.pack();
         frame.setLocationRelativeTo(null);
         frame.setResizable(true);
